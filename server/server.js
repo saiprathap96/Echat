@@ -3,8 +3,10 @@ import express from 'express'; import http from 'http'; import mongoose from 'mo
 import { Server } from 'socket.io'; import jwt from 'jsonwebtoken'; import bcrypt from 'bcrypt';
 import helmet from 'helmet'; import cors from 'cors'; import rateLimit from 'express-rate-limit'; import { z } from 'zod';
 
-const { PORT = 4000, MONGODB_URI, JWT_SECRET, CLIENT_URL = 'http://localhost:5173', NODE_ENV } = process.env;
-if (!JWT_SECRET || !MONGODB_URI) throw new Error('Set JWT_SECRET and MONGODB_URI in .env');
+const PORT = process.env.PORT || 4000;
+const CLIENT_URL = process.env.CLIENT_URL || '*';
+const JWT_SECRET = process.env.JWT_SECRET || 'securechat_jwt_secret_key_random_default_2026';
+const MONGODB_URI = process.env.MONGODB_URI;
 
 // ---- Models: only PUBLIC keys and ciphertext are ever stored ----
 const User = mongoose.model('User', new mongoose.Schema({
@@ -21,7 +23,7 @@ const Message = mongoose.model('Message', msgSchema);
 const convId = (a, b) => [String(a), String(b)].sort().join(':');
 
 const app = express();
-app.use(helmet(), cors({ origin: CLIENT_URL }), express.json({ limit: '100kb' }));
+app.use(helmet(), cors({ origin: CLIENT_URL === '*' ? true : [CLIENT_URL, 'http://localhost:5173'] }), express.json({ limit: '100kb' }));
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 const wrap = (fn) => (req, res, next) => fn(req, res).catch(next);
 const sign = (u) => jwt.sign({ sub: String(u._id) }, JWT_SECRET, { expiresIn: '7d' });
@@ -32,8 +34,10 @@ const auth = (req, res, next) => {
 const pub = (u) => ({ id: u._id, name: u.name, username: u.username, identityPublicKey: u.identityPublicKey });
 
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20 });
-const reg = z.object({ name: z.string().min(1).max(60), username: z.string().regex(/^[a-z0-9_]{3,20}$/i),
-  email: z.string().email(), password: z.string().min(8).max(100), identityPublicKey: z.object({}).passthrough() });
+const reg = z.object({
+  name: z.string().min(1).max(60), username: z.string().regex(/^[a-z0-9_]{3,20}$/i),
+  email: z.string().email(), password: z.string().min(8).max(100), identityPublicKey: z.object({}).passthrough()
+});
 
 app.post('/api/auth/register', limiter, wrap(async (req, res) => {
   const { password, ...d } = reg.parse(req.body);
@@ -72,7 +76,7 @@ app.use((err, req, res, next) => {
 
 // ---- Socket.IO: server relays ciphertext only ----
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: CLIENT_URL } });
+const io = new Server(server, { cors: { origin: CLIENT_URL === '*' ? '*' : [CLIENT_URL, 'http://localhost:5173'] } });
 const online = new Map();
 io.use((s, next) => { try { s.uid = jwt.verify(s.handshake.auth.token, JWT_SECRET).sub; next(); } catch { next(new Error('unauthorized')); } });
 io.on('connection', (s) => {
@@ -109,9 +113,10 @@ io.on('connection', (s) => {
 });
 let dbUri = MONGODB_URI;
 try {
+  if (!dbUri) throw new Error('No MONGODB_URI specified');
   await mongoose.connect(dbUri, { serverSelectionTimeoutMS: 2500 });
 } catch (err) {
-  console.log(`Could not connect to ${MONGODB_URI}, starting embedded in-memory MongoDB...`);
+  console.log(`Could not connect to ${MONGODB_URI || 'default database'}, starting embedded in-memory MongoDB...`);
   const { MongoMemoryServer } = await import('mongodb-memory-server');
   const mongod = await MongoMemoryServer.create();
   dbUri = mongod.getUri();
