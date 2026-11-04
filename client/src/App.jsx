@@ -3,7 +3,7 @@ import axios from 'axios'; import { io } from 'socket.io-client';
 import { Search, Send, Lock, ShieldCheck, ArrowLeft, LogOut } from 'lucide-react';
 import { createIdentity, hasIdentity, encrypt, decrypt, safetyNumber } from './crypto/e2ee.js';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const API = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && !window.location.origin.includes('localhost') ? window.location.origin : 'http://localhost:4000');
 const http = axios.create({ baseURL: API + '/api' });
 const load = () => JSON.parse(localStorage.getItem('sc') || 'null');
 

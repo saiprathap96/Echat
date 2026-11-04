@@ -2,6 +2,11 @@ import 'dotenv/config';
 import express from 'express'; import http from 'http'; import mongoose from 'mongoose';
 import { Server } from 'socket.io'; import jwt from 'jsonwebtoken'; import bcrypt from 'bcrypt';
 import helmet from 'helmet'; import cors from 'cors'; import rateLimit from 'express-rate-limit'; import { z } from 'zod';
+import path from 'path'; import { fileURLToPath } from 'url'; import fs from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distPath = path.resolve(__dirname, '../client/dist');
 
 const PORT = process.env.PORT || 4000;
 const CLIENT_URL = process.env.CLIENT_URL || '*';
@@ -23,7 +28,8 @@ const Message = mongoose.model('Message', msgSchema);
 const convId = (a, b) => [String(a), String(b)].sort().join(':');
 
 const app = express();
-app.use(helmet(), cors({ origin: CLIENT_URL === '*' ? true : [CLIENT_URL, 'http://localhost:5173'] }), express.json({ limit: '100kb' }));
+app.use(helmet({ contentSecurityPolicy: false }), cors({ origin: CLIENT_URL === '*' ? true : [CLIENT_URL, 'http://localhost:5173'] }), express.json({ limit: '100kb' }));
+if (fs.existsSync(distPath)) app.use(express.static(distPath));
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 const wrap = (fn) => (req, res, next) => fn(req, res).catch(next);
 const sign = (u) => jwt.sign({ sub: String(u._id) }, JWT_SECRET, { expiresIn: '7d' });
@@ -67,6 +73,17 @@ app.get('/api/messages/:peerId', auth, wrap(async (req, res) => {
   if (req.query.before) q.createdAt = { $lt: new Date(req.query.before) };
   res.json((await Message.find(q).sort({ createdAt: -1 }).limit(30)).reverse());
 }));
+if (fs.existsSync(distPath)) {
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  app.get('/', (req, res) => {
+    res.send(`<!DOCTYPE html><html><head><title>SecureChat API</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#09090b;color:#f4f4f5;font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh}.c{max-width:480px;margin:1rem;padding:2rem;border:1px solid #27272a;border-radius:1rem;background:#18181b;text-align:center}h1{color:#3b82f6;margin:0 0 .5rem 0}.b{display:inline-block;padding:.4rem 1rem;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.2);border-radius:999px;color:#4ade80;font-size:.85rem;margin:1rem 0}p{color:#a1a1aa;font-size:.9rem;line-height:1.5}.i{background:#27272a;border-radius:.5rem;padding:.8rem;text-align:left;font-size:.85rem;margin-top:1.2rem}</style></head><body><div class="c"><h1>🔒 SecureChat API</h1><div class="b">● Backend is Online</div><p>This URL is your backend API service.</p><div class="i">💡 <strong>Next:</strong> Open your Render dashboard and visit your <strong>frontend site URL</strong> (or deploy the <code>client</code> as a static site).</div></div></body></html>`);
+  });
+}
+
 app.use((err, req, res, next) => {
   if (err.name === 'ZodError') return res.status(400).json({ error: 'Invalid input' });
   if (err.code === 11000) return res.status(409).json({ error: 'Already exists' });
