@@ -22,6 +22,7 @@ const convId = (a, b) => [String(a), String(b)].sort().join(':');
 
 const app = express();
 app.use(helmet(), cors({ origin: CLIENT_URL }), express.json({ limit: '100kb' }));
+app.get('/api/health', (req, res) => res.json({ ok: true }));
 const wrap = (fn) => (req, res, next) => fn(req, res).catch(next);
 const sign = (u) => jwt.sign({ sub: String(u._id) }, JWT_SECRET, { expiresIn: '7d' });
 const auth = (req, res, next) => {
